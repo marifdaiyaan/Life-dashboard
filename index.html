@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0d1117" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Life Command Center</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0d1117; color: #e6edf3; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+    .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 14px; }
+    .btn-press:active { transform: scale(0.96); transition: transform 0.1s; }
+  </style>
+</head>
+<body class="p-4 pb-20 max-w-md mx-auto select-none">
+
+  <!-- HEADER -->
+  <header class="flex justify-between items-center mb-5">
+    <div>
+      <p class="text-xs tracking-widest text-gray-400 uppercase">Command Center</p>
+      <h1 id="today-date" class="text-xl font-bold text-white">Loading...</h1>
+    </div>
+    <button onclick="openSettings()" class="p-2.5 card btn-press text-gray-300" title="Settings">
+      ⚙️
+    </button>
+  </header>
+
+  <!-- 1. QUICK LAUNCH APP DOCK -->
+  <section class="mb-6">
+    <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2.5">Quick Launch</h2>
+    <div id="app-dock" class="grid grid-cols-4 gap-2.5"></div>
+  </section>
+
+  <!-- 2. GOOGLE CALENDAR EVENTS -->
+  <section class="mb-6">
+    <div class="flex justify-between items-center mb-2.5">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Today's Schedule</h2>
+      <button onclick="fetchCalendarEvents()" class="text-xs text-blue-400">Refresh</button>
+    </div>
+    <div id="calendar-box" class="card p-3.5 space-y-2.5 text-sm">
+      <p class="text-gray-400 text-xs">Tap ⚙️ to add your Google Calendar iCal URL.</p>
+    </div>
+  </section>
+
+  <!-- 3. TRACKED HABITS -->
+  <section class="mb-6">
+    <div class="flex justify-between items-center mb-2.5">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Daily Habits</h2>
+      <button onclick="addHabit()" class="text-xs text-emerald-400 font-medium">+ Add</button>
+    </div>
+    <div id="habits-list" class="card divide-y divide-gray-800"></div>
+  </section>
+
+  <!-- 4. SCHEDULED AI PROMPTS -->
+  <section class="mb-6">
+    <div class="flex justify-between items-center mb-2.5">
+      <h2 class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Scheduled Prompts</h2>
+      <button onclick="addPrompt()" class="text-xs text-purple-400 font-medium">+ New</button>
+    </div>
+    <div id="prompts-list" class="space-y-3"></div>
+  </section>
+
+  <!-- SETTINGS MODAL -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center p-4 z-50">
+    <div class="card w-full max-w-sm p-5 space-y-4">
+      <h3 class="text-lg font-bold">Dashboard Settings</h3>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Google Calendar Secret iCal URL (.ics)</label>
+        <input id="ical-input" type="url" placeholder="https://calendar.google.com/calendar/ical/..." class="w-full bg-[#0d1117] border border-gray-700 rounded-lg p-2.5 text-xs text-white" />
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Gemini API Key (Optional - for direct runs)</label>
+        <input id="api-input" type="password" placeholder="AIzaSy..." class="w-full bg-[#0d1117] border border-gray-700 rounded-lg p-2.5 text-xs text-white" />
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeSettings()" class="px-4 py-2 text-xs text-gray-400">Cancel</button>
+        <button onclick="saveSettings()" class="px-4 py-2 bg-blue-600 rounded-lg text-xs font-semibold">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- DEFAULT DATA ---
+    const defaultApps = [
+      { name: 'Obsidian', icon: '📘', uri: 'intent:#Intent;package=md.obsidian;end' },
+      { name: 'Joplin', icon: '📝', uri: 'intent:#Intent;package=net.cozic.joplin;end' },
+      { name: 'Gemini', icon: '✨', uri: 'intent:#Intent;package=com.google.android.apps.bard;end' },
+      { name: 'Keep', icon: '💡', uri: 'intent:#Intent;package=com.google.android.keep;end' }
+    ];
+
+    const defaultHabits = [
+      { id: 1, text: 'Morning Focus Block (2h)', done: false, streak: 0 },
+      { id: 2, text: 'Hit Daily Protein Target', done: false, streak: 0 },
+      { id: 3, text: 'Evening Review & Sync', done: false, streak: 0 }
+    ];
+
+    const defaultPrompts = [
+      {
+        id: 1,
+        title: 'Morning Study & Focus Plan',
+        time: '08:00 AM',
+        text: 'Give me a sharp, 3-step execution plan for deep focus study today.',
+        output: ''
+      }
+    ];
+
+    // --- STATE MANAGEMENT ---
+    let state = JSON.parse(localStorage.getItem('lcc_state')) || {
+      date: new Date().toDateString(),
+      icalUrl: '',
+      apiKey: '',
+      apps: defaultApps,
+      habits: defaultHabits,
+      prompts: defaultPrompts
+    };
+
+    // Reset daily checkboxes on a new day
+    const todayStr = new Date().toDateString();
+    if (state.date !== todayStr) {
+      state.habits.forEach(h => {
+        h.streak = h.done ? h.streak + 1 : 0;
+        h.done = false;
+      });
+      state.date = todayStr;
+      saveState();
+    }
+
+    function saveState() {
+      localStorage.setItem('lcc_state', JSON.stringify(state));
+      renderAll();
+    }
+
+    // --- RENDER FUNCTIONS ---
+    function renderAll() {
+      document.getElementById('today-date').innerText = new Date().toLocaleDateString('en-US', {
+        weekday: 'long', month: 'short', day: 'numeric'
+      });
+
+      // Render Apps
+      const dock = document.getElementById('app-dock');
+      dock.innerHTML = state.apps.map(app => `
+        <a href="${app.uri}" class="card p-3 flex flex-col items-center justify-center btn-press text-center">
+          <span class="text-2xl mb-1">${app.icon}</span>
+          <span class="text-[11px] font-medium text-gray-200">${app.name}</span>
+        </a>
+      `).join('');
+
+      // Render Habits
+      const habitsEl = document.getElementById('habits-list');
+      habitsEl.innerHTML = state.habits.map(h => `
+        <div onclick="toggleHabit(${h.id})" class="p-3.5 flex items-center justify-between cursor-pointer active:bg-gray-800/50">
+          <div class="flex items-center gap-3">
+            <div class="w-5 h-5 rounded-md border flex items-center justify-center ${h.done ? 'bg-emerald-500 border-emerald-500 text-black font-bold' : 'border-gray-600'}">
+              ${h.done ? '✓' : ''}
+            </div>
+            <span class="text-sm ${h.done ? 'line-through text-gray-500' : 'text-gray-100'}">${h.text}</span>
+          </div>
+          <span class="text-xs text-gray-500">🔥 ${h.streak}</span>
+        </div>
+      `).join('');
+
+      // Render Prompts
+      const promptsEl = document.getElementById('prompts-list');
+      promptsEl.innerHTML = state.prompts.map(p => `
+        <div class="card p-3.5 space-y-2">
+          <div class="flex justify-between items-center">
+            <span class="font-semibold text-sm text-white">${p.title}</span>
+            <span class="text-[11px] px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">${p.time}</span>
+          </div>
+          <p class="text-xs text-gray-400 italic">"${p.text}"</p>
+          ${p.output ? `<div class="p-2.5 bg-[#0d1117] rounded-lg text-xs text-gray-200 whitespace-pre-wrap border border-gray-800">${p.output}</div>` : ''}
+          <div class="flex gap-2 pt-1">
+            <button onclick="copyAndOpenGemini(${p.id})" class="flex-1 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-medium btn-press">
+              Copy & Open Gemini
+            </button>
+            ${state.apiKey ? `<button onclick="runPromptAPI(${p.id})" class="px-3 py-1.5 bg-purple-600 rounded-lg text-xs font-semibold btn-press">Run</button>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // --- ACTIONS ---
+    function toggleHabit(id) {
+      const h = state.habits.find(x => x.id === id);
+      if (h) h.done = !h.done;
+      saveState();
+    }
+
+    function addHabit() {
+      const text = prompt('New daily habit:');
+      if (text && text.trim()) {
+        state.habits.push({ id: Date.now(), text: text.trim(), done: false, streak: 0 });
+        saveState();
+      }
+    }
+
+    function addPrompt() {
+      const title = prompt('Prompt Title (e.g., Evening Review):');
+      if (!title) return;
+      const time = prompt('Scheduled Time (e.g., 09:00 PM):', '08:00 AM') || 'Daily';
+      const text = prompt('Enter the prompt text:');
+      if (text) {
+        state.prompts.push({ id: Date.now(), title, time, text, output: '' });
+        saveState();
+      }
+    }
+
+    function copyAndOpenGemini(id) {
+      const p = state.prompts.find(x => x.id === id);
+      if (!p) return;
+      navigator.clipboard.writeText(p.text);
+      window.location.href = 'intent:#Intent;package=com.google.android.apps.bard;end';
+    }
+
+    async function runPromptAPI(id) {
+      const p = state.prompts.find(x => x.id === id);
+      if (!p || !state.apiKey) return;
+      p.output = 'Generating...';
+      renderAll();
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: p.text }] }] })
+        });
+        const data = await res.json();
+        p.output = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response.';
+      } catch (e) {
+        p.output = 'Error running prompt.';
+      }
+      saveState();
+    }
+
+    // --- GOOGLE CALENDAR PARSER (.ICS) ---
+    async function fetchCalendarEvents() {
+      const box = document.getElementById('calendar-box');
+      if (!state.icalUrl) {
+        box.innerHTML = '<p class="text-gray-400 text-xs">Tap ⚙️ to paste your Google Calendar Secret iCal URL.</p>';
+        return;
+      }
+      box.innerHTML = '<p class="text-gray-400 text-xs">Syncing calendar...</p>';
+      try {
+        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(state.icalUrl)}`;
+        const res = await fetch(proxyUrl);
+        const icsText = await res.text();
+        const events = parseTodayICS(icsText);
+
+        if (events.length === 0) {
+          box.innerHTML = '<p class="text-gray-400 text-xs">No events scheduled for today.</p>';
+          return;
+        }
+        box.innerHTML = events.map(ev => `
+          <div class="flex justify-between items-center border-l-2 border-blue-500 pl-2.5">
+            <span class="text-gray-100 font-medium">${ev.summary}</span>
+            <span class="text-xs text-blue-400">${ev.time}</span>
+          </div>
+        `).join('');
+      } catch (e) {
+        box.innerHTML = '<p class="text-red-400 text-xs">Failed to load calendar. Check your iCal link.</p>';
+      }
+    }
+
+    function parseTodayICS(ics) {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayPrefix = `${yyyy}${mm}${dd}`;
+
+      const blocks = ics.split('BEGIN:VEVENT');
+      const results = [];
+
+      for (let i = 1; i < blocks.length; i++) {
+        const block = blocks[i];
+        const dtMatch = block.match(/DTSTART(?:;[^:]*)?:(\d{8}(?:T\d{6}Z?)?)/);
+        const sumMatch = block.match(/SUMMARY:(.*)/);
+        if (dtMatch && sumMatch && dtMatch[1].startsWith(todayPrefix)) {
+          let timeStr = 'All Day';
+          if (dtMatch[1].includes('T')) {
+            const rawTime = dtMatch[1].split('T')[1];
+            const hr = parseInt(rawTime.slice(0, 2), 10);
+            const min = rawTime.slice(2, 4);
+            const ampm = hr >= 12 ? 'PM' : 'AM';
+            const hr12 = hr % 12 || 12;
+            timeStr = `${hr12}:${min} ${ampm}`;
+          }
+          results.push({ summary: sumMatch[1].trim(), time: timeStr });
+        }
+      }
+      return results;
+    }
+
+    // --- SETTINGS MODAL ---
+    function openSettings() {
+      document.getElementById('ical-input').value = state.icalUrl;
+      document.getElementById('api-input').value = state.apiKey;
+      document.getElementById('settings-modal').classList.replace('hidden', 'flex');
+    }
+    function closeSettings() {
+      document.getElementById('settings-modal').classList.replace('flex', 'hidden');
+    }
+    function saveSettings() {
+      state.icalUrl = document.getElementById('ical-input').value.trim();
+      state.apiKey = document.getElementById('api-input').value.trim();
+      closeSettings();
+      saveState();
+      fetchCalendarEvents();
+    }
+
+    // INIT
+    renderAll();
+    fetchCalendarEvents();
+  </script>
+</body>
+</html>
